@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ReVive</title>
+  <link rel="icon" href="/logo.png" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="site">
+    <button type="button" class="brand" data-go="home">
+      <img class="logo" src="/logo.png" alt="" />
+      <span class="brand-copy">
+        <span class="brand-name">ReVive</span>
+        <span class="brand-place">Waste management and energy creation initiative for your locality</span>
+      </span>
+    </button>
+    <nav class="site-nav">
+      <button type="button" data-go="home" class="active">Home</button>
+      <button type="button" data-go="reports">Reports</button>
+      <button type="button" data-go="chat">Chat</button>
+      <button type="button" data-go="report" class="nav-cta">Report a pile</button>
+    </nav>
+  </header>
+  <main>
+    <section id="home" class="screen active map-screen front">
+      <aside class="front-side">
+        <h1>Drain map</h1>
+        <p class="tag">Piles, blocked drains, and the nearest dustbin.</p>
+        <input id="place-search" type="text" placeholder="Search a note, like drain or mess" />
+        <p class="filter-label">Show on the map</p>
+        <div class="filter-pills">
+          <button type="button" class="chip reports on" id="chip-reports">Reports</button>
+          <button type="button" class="chip hotspots" id="chip-hotspots">Hotspots</button>
+          <button type="button" class="chip bins on" id="chip-bins">Bins</button>
+        </div>
+        <div class="stats">
+          <div><strong data-stat="count">0</strong><span>Reports</span></div>
+          <div><strong data-stat="noted">0</strong><span>With a note</span></div>
+          <div><strong data-stat="today">0</strong><span>Today</span></div>
+        </div>
+        <button type="button" class="nearest-bin" id="open-nearest-bin">
+          <img id="nearest-bin-photo" alt="" />
+          <span>
+            <strong id="nearest-bin-name">Nearest dustbin</strong>
+            <span id="nearest-bin-text">Finding the nearest dustbin…</span>
+          </span>
+          <span id="nearest-bin-distance" class="distance"></span>
+        </button>
+        <h2>Dustbins</h2>
+        <ul id="bin-list" class="side-list"></ul>
+        <h2>Reports</h2>
+        <ul id="report-list" class="side-list"></ul>
+      </aside>
+      <div class="front-map">
+        <div id="leaflet"></div>
+        <div id="tour-card" class="tour-card" hidden>
+          <strong id="tour-label"></strong>
+          <p id="tour-detail"></p>
+        </div>
+        <div class="map-views">
+          <button type="button" id="view-map" class="on">Map</button>
+          <button type="button" id="view-sat">Satellite</button>
+        </div>
+        <aside class="legend">
+          <strong>Pins</strong>
+          <p><i class="dot report"></i> Reports</p>
+          <p><i class="dot hot"></i> Hotspots</p>
+          <p><i class="dot bin"></i> Dustbins</p>
+        </aside>
+        <button type="button" class="locate" id="locate" aria-label="Center on me">⊕</button>
+        <button type="button" class="chip" id="show-me" hidden>My location</button>
+        <div id="layers" class="layers" hidden>
+          <div class="layers-card">
+            <h2>Map layers</h2>
+            <label class="switch-row">
+              <span><i class="dot report"></i> Reports</span>
+              <input id="layer-reports" type="checkbox" checked />
+            </label>
+            <label class="switch-row">
+              <span><i class="dot hot"></i> Hotspots</span>
+              <input id="layer-hotspots" type="checkbox" />
+            </label>
+            <label class="switch-row">
+              <span><i class="dot bin"></i> Dustbins</span>
+              <input id="layer-bins" type="checkbox" checked />
+            </label>
+            <button type="button" id="layers-close">Done</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="report" class="screen page">
+      <header class="top"><h1>Report a pile</h1></header>
+      <form id="form">
+        <label class="photo">
+          <input id="photo" name="photo" type="file" accept="image/*" capture="environment" required />
+          <span id="photo-label">Tap to take a photo</span>
+          <img id="preview" alt="" hidden />
+        </label>
+        <label>
+          What do you see?
+          <input id="note" name="note" type="text" maxlength="280" placeholder="Bags over the drain by the market" />
+        </label>
+        <p id="location" class="status">Finding your location…</p>
+        <button id="submit" type="submit">Save report</button>
+        <p id="message" class="message" role="status"></p>
+      </form>
+    </section>
+
+    <section id="reports" class="screen page">
+      <header class="top">
+        <div>
+          <h1>Reports</h1>
+          <p class="tag">Tap one to open it on the map</p>
+        </div>
+      </header>
+      <div class="filters">
+        <button type="button" class="chip active" data-filter="all">All</button>
+        <button type="button" class="chip" data-filter="today">Today</button>
+        <button type="button" class="chip" data-filter="noted">With a note</button>
+        <button type="button" class="chip" data-filter="cleaned">Cleaned</button>
+      </div>
+      <ul id="list" class="rows"></ul>
+      <div id="empty" class="empty" hidden>
+        <h2>No reports yet</h2>
+        <p>See a pile blocking a drain? Take a photo.</p>
+        <button type="button" data-go="report">Report a pile</button>
+      </div>
+    </section>
+
+    <section id="chat" class="screen page">
+      <header class="top">
+        <div>
+          <h1>Chat</h1>
+          <p class="tag">Strands agent. One truck trip, or biogas.</p>
+        </div>
+      </header>
+      <div id="thread"></div>
+      <form id="chat-form">
+        <input id="chat-input" type="text" maxlength="500" placeholder="Which piles are one truck trip?" required />
+        <button type="submit">Ask</button>
+      </form>
+    </section>
+
+    <section id="profile" class="screen page">
+      <header class="top"><h1>This device</h1></header>
+      <section class="card">
+        <h2>What you have saved</h2>
+        <div class="stats">
+          <div><strong data-stat="count">0</strong><span>Reports</span></div>
+          <div><strong data-stat="noted">0</strong><span>Notes</span></div>
+          <div><strong data-stat="today">0</strong><span>Today</span></div>
+        </div>
+      </section>
+      <button type="button" class="row-link" data-go="chat">Ask about these reports</button>
+      <p id="profile-location" class="status">Location is still loading.</p>
+    </section>
+
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

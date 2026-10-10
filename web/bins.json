@@ -1,0 +1,7 @@
+[
+  { "id": "bin-mess", "name": "Mess dustbin", "lat": 31.7074, "lng": 76.5264, "photo": "/bins/wet-dry.png" },
+  { "id": "bin-gate", "name": "Main gate dustbin", "lat": 31.7064, "lng": 76.5259, "photo": "/bins/pair.png" },
+  { "id": "bin-hostel", "name": "Hostel block dustbin", "lat": 31.7086, "lng": 76.5279, "photo": "/bins/four.png" },
+  { "id": "bin-library", "name": "Library dustbin", "lat": 31.7071, "lng": 76.5284, "photo": "/bins/wet-dry.png" },
+  { "id": "bin-market", "name": "Market dustbin", "lat": 31.6906, "lng": 76.5406, "photo": "/bins/pair.png" }
+]

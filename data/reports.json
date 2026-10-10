@@ -1,0 +1,43 @@
+[
+  {
+    "id": "waste-wet",
+    "photoUrl": "/uploads/waste-wet.png",
+    "lat": 31.707,
+    "lng": 76.5266,
+    "note": "wet food waste",
+    "createdAt": "2026-10-10T11:22:00+00:00",
+    "classification": null,
+    "status": "open"
+  },
+  {
+    "id": "waste-overflow",
+    "photoUrl": "/uploads/waste-overflow.jpg",
+    "lat": 31.7088,
+    "lng": 76.5286,
+    "note": "overflowing bins",
+    "createdAt": "2026-10-10T11:10:00+00:00",
+    "classification": null,
+    "status": "open"
+  },
+  {
+    "id": "waste-roadside",
+    "photoUrl": "/uploads/waste-roadside.png",
+    "lat": 31.7062,
+    "lng": 76.5256,
+    "note": "roadside waste pile",
+    "createdAt": "2026-10-10T10:20:00+00:00",
+    "classification": null,
+    "status": "cleaned",
+    "cleanedAt": "2026-10-10T14:25:14.215060+00:00"
+  },
+  {
+    "id": "waste-wall",
+    "photoUrl": "/uploads/waste-wall.png",
+    "lat": 31.7078,
+    "lng": 76.5278,
+    "note": "waste piled along the wall",
+    "createdAt": "2026-10-10T09:05:00+00:00",
+    "classification": null,
+    "status": "open"
+  }
+]
