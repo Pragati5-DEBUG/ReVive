@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from agent_chat import ask_agent
+from agent_chat import ask_agent, ask_gemini
 
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
@@ -32,6 +32,20 @@ BUCKET = os.environ.get("REVIVE_BUCKET", "revive-waste-802690829452")
 REGION = os.environ.get("AWS_REGION", "us-west-2")
 # off: laptop files. public: permanent bucket link. private: short-lived link.
 S3_MODE = "off"
+
+
+def load_env() -> None:
+    path = ROOT / ".env"
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        value = value.strip().strip('"').strip("'")
+        if value:
+            os.environ[name.strip()] = value
 
 
 def load_reports() -> list[dict]:
@@ -309,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _chat(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
-        if length <= 0 or length > 20_000:
+        if length <= 0 or length > 8_000_000:
             self._json(400, {"error": "Type a question"})
             return
         try:
@@ -318,52 +332,72 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "Type a question"})
             return
         question = str(payload.get("message", "")).strip()
+        image = _chat_image(payload)
+        if image and not question:
+            question = "How much biogas can this pile generate?"
         if not question:
             self._json(400, {"error": "Type a question"})
             return
-        demo = _demo_reply(question)
-        if demo:
-            self._json(200, demo)
+        load_env()
+        if os.environ.get("GEMINI_API_KEY"):
+            try:
+                reply = ask_gemini(question, load_reports(), image)
+            except Exception as exc:
+                detail = str(exc).strip()
+                print(f"Chat failed: {type(exc).__name__}: {detail[:120]}", flush=True)
+                if "(429)" in detail:
+                    reply = "Gemini is out of free answers for today. Ask again tomorrow."
+                else:
+                    reply = "The chat could not answer just then. Ask that again."
+            self._json(200, {"reply": reply})
             return
         try:
-            reply = ask_agent(question, load_reports())
+            reply = _ask_with_limit(question)
         except Exception as exc:
             self._json(200, {"reply": _agent_error(exc)})
             return
         self._json(200, {"reply": reply})
 
 
-def _demo_reply(question: str) -> dict | None:
-    """Stand-in for the video question while the Bedrock token quota is exhausted."""
-    asked = question.strip().lower().rstrip("?").strip()
-    expected = "which piles can one truck collect together, and which waste can go to biogas"
-    if asked != expected:
+def _chat_image(payload: dict) -> dict | None:
+    raw = payload.get("image")
+    if not isinstance(raw, dict):
         return None
-    return {
-        "reply": (
-            "All four piles are within 400 metres, so one truck can collect them "
-            "and skip three extra trips. Send the wet food waste to biogas. "
-            "The other notes do not say if the waste is wet or plastic."
-        ),
-        "tour": [
-            {
-                "kind": "route",
-                "label": "This is the route",
-                "detail": "One truck collects all four piles and skips three extra trips.",
-                "ids": ["waste-roadside", "waste-wet", "waste-wall", "waste-overflow"],
-            },
-            {
-                "kind": "pile",
-                "label": "This is the pile",
-                "detail": "Wet food waste. Send it to biogas.",
-                "id": "waste-wet",
-            },
-        ],
-    }
+    mime = str(raw.get("mime") or "").lower()
+    if mime == "image/jpg":
+        mime = "image/jpeg"
+    if mime not in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+        return None
+    data = str(raw.get("data") or "")
+    if len(data) < 32 or len(data) > 6_000_000:
+        return None
+    return {"mime": mime, "data": data}
+
+
+def _ask_with_limit(question: str) -> str:
+    """Stop waiting when Bedrock keeps refusing the daily token cap."""
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        job = pool.submit(ask_agent, question, load_reports())
+        try:
+            return job.result(timeout=20)
+        except FutureTimeout:
+            return (
+                "Bedrock is still out of tokens for today, so this question has no answer yet. "
+                "The saved question about one truck and biogas still answers."
+            )
 
 
 def _agent_error(exc: Exception) -> str:
     name = type(exc).__name__
+    message = str(exc)
+    if name == "ThrottlingException" or "Too many tokens" in message:
+        return (
+            "Bedrock is still out of tokens for today, so this question has no answer yet. "
+            "The saved question about one truck and biogas still answers."
+        )
     if name in {"NoCredentialsError", "PartialCredentialsError", "NoAuthTokenError"}:
         return (
             "The Strands agent is connected, and its model is Amazon Bedrock. "
@@ -382,12 +416,21 @@ def _float_field(parts: dict[str, tuple[str, bytes]], name: str) -> float | None
 
 
 def main() -> None:
+    load_env()
     DATA.mkdir(parents=True, exist_ok=True)
     UPLOADS.mkdir(parents=True, exist_ok=True)
-    prepare_bucket()
-    publish_saved_photos()
-    server = ThreadingHTTPServer(("127.0.0.1", 8787), Handler)
-    print("ReVive running at http://127.0.0.1:8787")
+    on_beanstalk = Path("/opt/elasticbeanstalk").exists()
+    if on_beanstalk:
+        host, port = "0.0.0.0", int(os.environ.get("PORT", "8000"))
+    else:
+        host, port = "127.0.0.1", int(os.environ.get("PORT", "8787"))
+    try:
+        prepare_bucket()
+        publish_saved_photos()
+    except Exception as exc:
+        print(f"S3 setup skipped ({type(exc).__name__}). Photos stay on this server.")
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"ReVive running at http://{host}:{port}", flush=True)
     server.serve_forever()
 
 

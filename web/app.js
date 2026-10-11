@@ -32,6 +32,20 @@ let hotspotMarkers;
 let binMarkers;
 let meMarker;
 let query = "";
+let placeHit = null;
+let placeMarker = null;
+let placeTimer = 0;
+const places = [
+  { name: "Library", lat: 31.7071, lng: 76.5284 },
+  { name: "Parvati hostel", lat: 31.7039508, lng: 76.5256693 },
+  { name: "Satpura hostel", lat: 31.7135017, lng: 76.5254695 },
+  { name: "Hostel block", lat: 31.7086, lng: 76.5279 },
+  { name: "Mess", lat: 31.7074, lng: 76.5264 },
+  { name: "Main gate", lat: 31.7064, lng: 76.5259 },
+  { name: "Market", lat: 31.6906, lng: 76.5406 },
+];
+const PLACE_METRES = 400;
+let mapStatus = "all";
 let streets;
 let satellite;
 
@@ -59,6 +73,16 @@ photoInput.addEventListener("change", () => {
 if (sheetToggle) sheetToggle.addEventListener("click", () => nearby.classList.toggle("open"));
 document.querySelector("#show-me").addEventListener("click", centerOnMe);
 document.querySelector("#locate").addEventListener("click", centerOnMe);
+document.querySelectorAll("[data-map-status]").forEach((button) => {
+  button.addEventListener("click", () => {
+    mapStatus = button.dataset.mapStatus;
+    document.querySelectorAll("[data-map-status]").forEach((chip) => {
+      chip.classList.toggle("on", chip === button);
+    });
+    renderNearby();
+    drawMarkers();
+  });
+});
 document.querySelector("#chip-reports").addEventListener("click", () => pickLayer("reports"));
 document.querySelector("#chip-hotspots").addEventListener("click", () => pickLayer("hotspots"));
 document.querySelector("#chip-bins").addEventListener("click", () => pickLayer("bins"));
@@ -96,8 +120,25 @@ function show(name) {
   const target = name === "map" ? "home" : name;
   screens.forEach((screen) => screen.classList.toggle("active", screen.id === target));
   dockButtons.forEach((button) => button.classList.toggle("active", button.dataset.go === target));
+  const guidePopup = document.querySelector("#guide-popup");
+  const guideVideo = document.querySelector("#guide-video");
+  if (guidePopup && guideVideo) {
+    if (target === "chat") {
+      guidePopup.hidden = false;
+      guideVideo.currentTime = 0;
+      guideVideo.play().catch(() => {});
+    } else {
+      guideVideo.pause();
+      guidePopup.hidden = true;
+    }
+  }
   if (target === "home") showMap();
 }
+
+document.querySelector("#guide-gotit").addEventListener("click", () => {
+  document.querySelector("#guide-video").pause();
+  document.querySelector("#guide-popup").hidden = true;
+});
 
 function askLocation() {
   navigator.geolocation.getCurrentPosition(
@@ -179,6 +220,8 @@ function renderStats() {
     count: reports.length,
     noted: reports.filter((report) => report.note).length,
     today: reports.filter((report) => new Date(report.createdAt) >= start).length,
+    cleaned: reports.filter((report) => isCleaned(report)).length,
+    hotspots: clusterReports().length,
   };
   document.querySelectorAll("[data-stat]").forEach((node) => {
     node.textContent = values[node.dataset.stat];
@@ -188,6 +231,62 @@ function renderStats() {
 function matchesQuery(item) {
   if (!query) return true;
   return `${item.note || ""} ${item.name || ""}`.toLowerCase().includes(query);
+}
+
+function nearPlace(lat, lng) {
+  if (!placeHit) return true;
+  return distanceBetween(lat, lng, placeHit.lat, placeHit.lng) <= PLACE_METRES;
+}
+
+function bestPlace(text) {
+  const hits = places.filter((place) => place.name.toLowerCase().includes(text));
+  hits.sort((a, b) => {
+    const aName = a.name.toLowerCase();
+    const bName = b.name.toLowerCase();
+    const aRank = aName === text ? 0 : aName.startsWith(text) ? 1 : 2;
+    const bRank = bName === text ? 0 : bName.startsWith(text) ? 1 : 2;
+    return aRank - bRank || aName.length - bName.length;
+  });
+  return hits[0] || null;
+}
+
+function showPlaceResult(text) {
+  const node = document.querySelector("#place-result");
+  node.hidden = !text;
+  node.textContent = text || "";
+}
+
+function choosePlace(place) {
+  placeHit = place;
+  const count = reports.filter((report) => nearPlace(report.lat, report.lng)).length;
+  showPlaceResult(count
+    ? `${place.name}. ${count} report${count === 1 ? "" : "s"} here.`
+    : `${place.name}. No reports here.`);
+  renderLists();
+  if (!map) show("home");
+  if (!map || touring) return;
+  map.flyTo([place.lat, place.lng], 18, { duration: 0.45 });
+  drawMarkers();
+  if (placeMarker) placeMarker.openPopup();
+}
+
+async function lookupPlace(text) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(`${text} Hamirpur`)}`;
+  try {
+    const response = await fetch(url);
+    const found = await response.json();
+    const hit = found.find((item) => Math.abs(Number(item.lat) - 31.71) < 0.2 && Math.abs(Number(item.lon) - 76.53) < 0.2);
+    if (!hit || document.querySelector("#place-search").value.trim().toLowerCase() !== text) return;
+    choosePlace({ name: hit.display_name.split(",")[0], lat: Number(hit.lat), lng: Number(hit.lon) });
+  } catch (error) {
+    showPlaceResult("That place could not be found.");
+  }
+}
+
+function matchesStatus(report) {
+  if (mapStatus === "open") return !isCleaned(report);
+  if (mapStatus === "cleaned") return isCleaned(report);
+  return true;
 }
 
 function renderLists() {
@@ -212,7 +311,7 @@ function fillList(target, items, compact) {
       <div>
         <strong>${report.note || "Pile reported"}</strong>
         <p>${new Date(report.createdAt).toLocaleString()}</p>
-        ${compact ? "" : `<p>${report.lat.toFixed(5)}, ${report.lng.toFixed(5)}</p>`}
+        ${compact ? "" : `<p>${placeName(report.lat, report.lng)}</p>`}
         ${compact ? "" : cleanToggle(report)}
       </div>`;
     item.addEventListener("click", () => focusReport(report.id));
@@ -234,12 +333,37 @@ function showMap() {
     hotspotMarkers = L.layerGroup().addTo(map);
     binMarkers = L.layerGroup().addTo(map);
     map.on("click", clearTour);
+    map.on("zoomend", placeMarkerPhotos);
   }
   setTimeout(() => map.invalidateSize(), 60);
   drawMarkers();
   if (touring) return;
-  if (position) map.setView([position.latitude, position.longitude], 15);
-  else if (reports[0]) map.setView([reports[0].lat, reports[0].lng], 14);
+  if (placeHit) {
+    map.setView([placeHit.lat, placeHit.lng], 18);
+    return;
+  }
+  frameWaste();
+}
+
+function frameWaste() {
+  const points = reports
+    .filter((report) => matchesStatus(report))
+    .map((report) => [report.lat, report.lng]);
+  if (points.length && map) {
+    const spots = points.map((point) => L.latLng(point[0], point[1]));
+    const lats = spots.map((spot) => spot.lat).sort((a, b) => a - b);
+    const lngs = spots.map((spot) => spot.lng).sort((a, b) => a - b);
+    const middle = L.latLng(lats[Math.floor(lats.length / 2)], lngs[Math.floor(lngs.length / 2)]);
+    const nearby = spots.filter((spot) => middle.distanceTo(spot) < 500);
+    const focus = nearby.length > 1 ? nearby : spots;
+    map.fitBounds(L.latLngBounds(focus), {
+      paddingTopLeft: [24, 76],
+      paddingBottomRight: [150, 24],
+      maxZoom: 17,
+    });
+    return;
+  }
+  if (position) map.setView([position.latitude, position.longitude], 16);
 }
 
 function pickLayer(mode) {
@@ -366,6 +490,19 @@ function distanceBetween(lat1, lng1, lat2, lng2) {
   return 2 * earth * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+function placeName(lat, lng) {
+  let best = places[0];
+  let bestMetres = Infinity;
+  for (const place of places) {
+    const metres = distanceBetween(lat, lng, place.lat, place.lng);
+    if (metres < bestMetres) {
+      best = place;
+      bestMetres = metres;
+    }
+  }
+  return best ? best.name : "this area";
+}
+
 function nearestBin() {
   if (!bins.length) return null;
   return bins
@@ -395,21 +532,23 @@ function renderNearestBin() {
 function renderNearby() {
   fillDistanceList(
     document.querySelector("#bin-list"),
-    bins.filter(matchesQuery),
+    bins.filter((bin) => nearPlace(bin.lat, bin.lng)),
     (bin) => bin.name,
     (bin) => focusBin(bin.id),
     "No dustbins yet.",
+    (bin) => bin.photo,
   );
   fillDistanceList(
     document.querySelector("#report-list"),
-    reports.filter(matchesQuery),
+    reports.filter((report) => matchesStatus(report) && nearPlace(report.lat, report.lng)),
     (report) => report.note || "Pile reported",
     (report) => focusReport(report.id),
     "No reports yet.",
+    (report) => report.photoUrl,
   );
 }
 
-function fillDistanceList(target, items, labelFor, onClick, emptyText) {
+function fillDistanceList(target, items, labelFor, onClick, emptyText, photoFor) {
   if (!target) return;
   target.innerHTML = "";
   const ranked = items
@@ -422,33 +561,52 @@ function fillDistanceList(target, items, labelFor, onClick, emptyText) {
   for (const item of ranked) {
     const row = document.createElement("li");
     const distance = formatDistance(item.meters);
-    row.innerHTML = `<strong>${labelFor(item)}</strong><span class="distance">${distance}</span>`;
+    const photo = photoFor ? photoFor(item) : "";
+    row.innerHTML = `${photo ? `<img src="${photo}" alt="">` : ""}<strong>${labelFor(item)}</strong><span class="distance">${distance}</span>`;
     row.addEventListener("click", () => onClick(item));
     target.appendChild(row);
   }
 }
 
-function iconForReport(report) {
+const binGlyph = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 3h6l1 2h5v2H3V5h5l1-2zm-1 6h2v10H8V9zm4 0h2v10h-2V9zm4 0h2v10h-2V9z"/></svg>';
+
+function markerIcon(kind, photo, cleaned) {
+  const mark = cleaned ? '<i class="cleaned-mark">✓</i>' : "";
+  const image = photo ? `<img src="${photo}" alt="">` : "";
   return L.divIcon({
     className: "pin-wrap",
-    html: `<span class="pin report${isCleaned(report) ? " cleaned" : ""}"><img src="${report.photoUrl}" alt="">${isCleaned(report) ? '<i class="cleaned-mark">✓</i>' : ""}</span>`,
-    iconSize: [44, 44],
-    iconAnchor: [22, 42],
+    html: `<span class="pin ${kind}${cleaned ? " cleaned" : ""}"><i class="bin-pin">${binGlyph}</i>${image}${mark}</span>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 36],
   });
 }
-const hotspotIcon = L.divIcon({
-  className: "pin-wrap",
-  html: '<span class="pin hot"></span>',
-  iconSize: [30, 30],
-  iconAnchor: [15, 15],
-});
+
+function iconForReport(report) {
+  return markerIcon("report", report.photoUrl, isCleaned(report));
+}
+
+function iconForHotspot(spot) {
+  return markerIcon("hot", spot.photoUrl, false);
+}
+
 function iconForBin(bin) {
-  return L.divIcon({
-    className: "pin-wrap",
-    html: `<span class="pin bin"><img src="${bin.photo}" alt=""></span>`,
-    iconSize: [44, 44],
-    iconAnchor: [22, 22],
-  });
+  return markerIcon("bin", bin.photo, false);
+}
+
+function placeMarkerPhotos() {
+  if (!map) return;
+  for (const group of [reportMarkers, hotspotMarkers, binMarkers]) {
+    if (!group) continue;
+    group.eachLayer((layer) => {
+      const element = layer.getElement();
+      if (!element) return;
+      element.style.overflow = "visible";
+      const image = element.querySelector("img");
+      if (image) image.style.transform = "";
+      const pin = element.querySelector(".pin");
+      if (pin) pin.style.transform = "";
+    });
+  }
 }
 
 function drawMarkers() {
@@ -457,7 +615,7 @@ function drawMarkers() {
   hotspotMarkers.clearLayers();
   binMarkers.clearLayers();
   if (showReports) {
-    for (const report of reports.filter(matchesQuery)) {
+    for (const report of reports.filter((report) => matchesStatus(report) && nearPlace(report.lat, report.lng))) {
       const marker = L.marker([report.lat, report.lng], { icon: iconForReport(report) })
         .bindPopup(`<strong>${report.note || "Reported pile"}</strong><br>${cleanToggle(report)}`);
       marker.reportId = report.id;
@@ -465,20 +623,37 @@ function drawMarkers() {
     }
   }
   if (showHotspots) {
-    for (const spot of clusterReports()) {
-      const marker = L.marker([spot.lat, spot.lng], { icon: hotspotIcon })
+    for (const spot of clusterReports().filter((spot) => nearPlace(spot.lat, spot.lng))) {
+      const marker = L.marker([spot.lat, spot.lng], { icon: iconForHotspot(spot) })
         .bindPopup(`<strong>${spot.note}</strong><br>${priorityLabel(spot.level)} priority`);
       marker.hotspotId = spot.id;
       marker.addTo(hotspotMarkers);
     }
   }
   if (showBins) {
-    for (const bin of bins.filter(matchesQuery)) {
+    for (const bin of bins.filter((bin) => nearPlace(bin.lat, bin.lng))) {
       const marker = L.marker([bin.lat, bin.lng], { icon: iconForBin(bin) })
         .bindPopup(`<strong>${bin.name}</strong><br>Throw trash here`);
       marker.binId = bin.id;
       marker.addTo(binMarkers);
     }
+  }
+  placeMarkerPhotos();
+  if (placeHit) {
+    const count = reports.filter((report) => nearPlace(report.lat, report.lng)).length;
+    const label = `${placeHit.name}<br>${count ? `${count} report${count === 1 ? "" : "s"} here` : "No reports here"}`;
+    if (!placeMarker) {
+      placeMarker = L.marker([placeHit.lat, placeHit.lng], {
+        icon: markerIcon("bin", "", false),
+      }).bindPopup(label).addTo(map);
+    } else {
+      placeMarker.setLatLng([placeHit.lat, placeHit.lng]);
+      placeMarker.setPopupContent(label);
+      if (!map.hasLayer(placeMarker)) placeMarker.addTo(map);
+    }
+    placeMarker.openPopup();
+  } else if (placeMarker) {
+    map.removeLayer(placeMarker);
   }
   if (position) {
     if (!meMarker) {
@@ -578,6 +753,35 @@ function fitReports() {
 const thread = document.querySelector("#thread");
 const chatForm = document.querySelector("#chat-form");
 const chatInput = document.querySelector("#chat-input");
+const chatFile = document.querySelector("#chat-file");
+const chatPreview = document.querySelector("#chat-preview");
+const chatPreviewImg = document.querySelector("#chat-preview-img");
+let chatPhoto = null;
+
+document.querySelector("#chat-photo").addEventListener("click", () => chatFile.click());
+chatFile.addEventListener("change", () => {
+  const file = chatFile.files && chatFile.files[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/") || file.size > 4_000_000) {
+    addBubble("assistant", "Choose a photo under 4 MB.");
+    chatFile.value = "";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const url = String(reader.result);
+    chatPhoto = { mime: file.type || "image/jpeg", data: url.slice(url.indexOf(",") + 1), url };
+    chatPreviewImg.src = url;
+    chatPreview.hidden = false;
+  };
+  reader.readAsDataURL(file);
+});
+document.querySelector("#chat-photo-clear").addEventListener("click", () => {
+  chatPhoto = null;
+  chatFile.value = "";
+  chatPreview.hidden = true;
+  chatPreviewImg.removeAttribute("src");
+});
 
 function clearTour() {
   window.clearTimeout(tourTimer);
@@ -622,7 +826,7 @@ function runTourStep(tour, index) {
   card.hidden = false;
   if (!tourLayer) tourLayer = L.layerGroup().addTo(map);
   if (step.kind === "route") {
-    drawRoute(step.ids || [], () => {
+    drawRoute(step.stops || [], () => {
       if (!touring || index + 1 >= tour.length) return;
       tourTimer = window.setTimeout(() => runTourStep(tour, index + 1), 800);
     });
@@ -645,15 +849,17 @@ function addRouteStop(item, number) {
   }).addTo(tourLayer);
 }
 
-function drawRoute(ids, done) {
-  const stops = ids.map((id) => reports.find((item) => item.id === id)).filter(Boolean);
+function drawRoute(stops, done) {
   if (stops.length < 2) {
     stops.forEach((item, index) => addRouteStop(item, index + 1));
     if (done) done();
     return;
   }
   const latlngs = stops.map((item) => [item.lat, item.lng]);
-  map.fitBounds(L.latLngBounds(latlngs).pad(0.35));
+  map.fitBounds(L.latLngBounds(latlngs).pad(0.4), {
+    paddingTopLeft: [24, 90],
+    paddingBottomRight: [24, 24],
+  });
   if (!map.getPane("route")) {
     const pane = map.createPane("route");
     pane.style.zIndex = "450";
@@ -672,7 +878,9 @@ function drawRoute(ids, done) {
     }
     const from = latlngs[segment];
     const to = latlngs[segment + 1];
-    document.querySelector("#tour-detail").textContent = `Pile ${segment + 1} to pile ${segment + 2}`;
+    const fromName = stops[segment].name || `Stop ${segment + 1}`;
+    const toName = stops[segment + 1].name || `Stop ${segment + 2}`;
+    document.querySelector("#tour-detail").textContent = `${fromName} to ${toName}`;
     const started = performance.now();
     function frame(now) {
       if (!touring) return;
@@ -712,11 +920,77 @@ function showTourPile(id) {
   });
 }
 
-function addBubble(role, text) {
+function addBubble(role, text, imageUrl) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${role}`;
-  bubble.textContent = text;
+  if (imageUrl) {
+    const image = document.createElement("img");
+    image.src = imageUrl;
+    image.alt = "Added photo";
+    bubble.appendChild(image);
+  }
+  if (text) bubble.appendChild(document.createTextNode(text));
+  const empty = document.querySelector("#chat-empty");
+  if (empty) empty.hidden = true;
   thread.appendChild(bubble);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function askedText(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function wantsGuide(text) {
+  return askedText(text).includes("guide my way");
+}
+
+function namedEnds(text) {
+  const match = askedText(text).match(/\bfrom\s+(.+?)\s+to\s+(.+)$/);
+  if (!match) return null;
+  return { from: match[1].trim(), to: match[2].trim() };
+}
+
+function guideTour() {
+  const order = ["waste-roadside", "waste-wet", "waste-wall", "waste-overflow"];
+  const known = order.filter((id) => reports.some((item) => item.id === id));
+  const rest = reports.filter((item) => !known.includes(item.id)).map((item) => item.id);
+  const ids = known.concat(rest);
+  const stops = ids.map((id, index) => {
+    const report = reports.find((item) => item.id === id);
+    return { lat: report.lat, lng: report.lng, name: `Pile ${index + 1}` };
+  }).filter((stop) => Number.isFinite(stop.lat));
+  if (stops.length < 2) return null;
+  return [{
+    kind: "route",
+    label: "This is the way",
+    detail: "Pile 1 to pile 2 to pile 3.",
+    stops,
+  }];
+}
+
+function routeStops(start, end) {
+  return [
+    { lat: start.lat, lng: start.lng, name: start.name },
+    { lat: end.lat, lng: end.lng, name: end.name },
+  ];
+}
+
+async function resolvePlace(raw) {
+  const text = raw.replace(/^(the|a)\s+/, "").trim();
+  if (!text) return null;
+  const local = bestPlace(text);
+  if (local) return local;
+  const bin = bins.find((item) => {
+    const name = item.name.toLowerCase().replace(" dustbin", "");
+    return name.includes(text) || text.includes(name);
+  });
+  if (bin) return { name: bin.name.replace(/ dustbin$/i, ""), lat: bin.lat, lng: bin.lng };
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(`${text} Hamirpur`)}`;
+  const response = await fetch(url);
+  const found = await response.json();
+  const hit = found.find((item) => Math.abs(Number(item.lat) - 31.71) < 0.25 && Math.abs(Number(item.lon) - 76.53) < 0.25);
+  if (!hit) return null;
+  return { name: hit.display_name.split(",")[0], lat: Number(hit.lat), lng: Number(hit.lon) };
 }
 
 document.addEventListener("click", () => {
@@ -726,24 +1000,70 @@ document.addEventListener("click", () => {
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = chatInput.value.trim();
-  if (!text) return;
-  addBubble("user", text);
+  const photo = chatPhoto;
+  if (!text && !photo) return;
+  const message = text || "How much biogas can this pile generate?";
+  addBubble("user", message, photo && photo.url);
   chatInput.value = "";
-  chatForm.querySelector("button").disabled = true;
+  if (photo) {
+    chatPhoto = null;
+    chatFile.value = "";
+    chatPreview.hidden = true;
+    chatPreviewImg.removeAttribute("src");
+  }
+  const ends = text ? namedEnds(text) : null;
+  if (ends && !photo) {
+    chatForm.querySelector("button[type=submit]").disabled = true;
+    try {
+      const start = await resolvePlace(ends.from);
+      const end = await resolvePlace(ends.to);
+      if (!start || !end) {
+        addBubble("assistant", `I could not find ${!start ? ends.from : ends.to} on the map.`);
+        return;
+      }
+      const stops = routeStops(start, end);
+      addBubble("assistant", `The red line starts at ${start.name} and ends at ${end.name}. Click anywhere else and it goes away.`);
+      playTour([{
+        kind: "route",
+        label: "This is the way",
+        detail: `${start.name} to ${end.name}`,
+        stops,
+      }]);
+    } catch (error) {
+      addBubble("assistant", "That place could not be found.");
+    } finally {
+      chatForm.querySelector("button[type=submit]").disabled = false;
+    }
+    return;
+  }
+  if (!photo && wantsGuide(text)) {
+    const tour = guideTour();
+    if (!tour) {
+      addBubble("assistant", "There are not enough piles yet to draw a way.");
+      return;
+    }
+    const path = tour[0].stops.map((stop) => stop.name.toLowerCase()).join(" to ");
+    addBubble("assistant", `The map is open. Follow the red line from ${path}. Click anywhere else and the line goes away.`);
+    playTour(tour);
+    return;
+  }
+  chatForm.querySelector("button[type=submit]").disabled = true;
   try {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({
+        message,
+        image: photo ? { mime: photo.mime, data: photo.data } : undefined,
+      }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Chat failed");
     addBubble("assistant", payload.reply);
-    if (payload.tour) playTour(payload.tour);
   } catch (error) {
     addBubble("assistant", error.message);
   } finally {
-    chatForm.querySelector("button").disabled = false;
+    chatForm.querySelector("button[type=submit]").disabled = false;
   }
 });
 
@@ -757,8 +1077,21 @@ async function loadBins() {
 
 document.querySelector("#place-search").addEventListener("input", (event) => {
   query = event.target.value.trim().toLowerCase();
-  renderLists();
-  if (map) drawMarkers();
+  window.clearTimeout(placeTimer);
+  if (!query) {
+    placeHit = null;
+    showPlaceResult("");
+    renderLists();
+    if (map) drawMarkers();
+    return;
+  }
+  const local = bestPlace(query);
+  if (local) {
+    choosePlace(local);
+    return;
+  }
+  showPlaceResult("Looking for that place…");
+  placeTimer = window.setTimeout(() => lookupPlace(query), 400);
 });
 document.querySelector("#view-map").addEventListener("click", () => {
   if (!map) return;
@@ -782,7 +1115,7 @@ zoom.hidden = true;
 document.body.appendChild(zoom);
 
 function zoomTarget(node) {
-  return node instanceof Element ? node.closest(".pin img, .sheet img, .rows img") : null;
+  return node instanceof Element ? node.closest(".pin img, .sheet img, .rows img, .side-list img") : null;
 }
 
 function placeZoom(event) {

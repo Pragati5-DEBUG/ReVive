@@ -27,8 +27,7 @@
     "note": "roadside waste pile",
     "createdAt": "2026-10-10T10:20:00+00:00",
     "classification": null,
-    "status": "cleaned",
-    "cleanedAt": "2026-10-10T14:25:14.215060+00:00"
+    "status": "open"
   },
   {
     "id": "waste-wall",
@@ -37,6 +36,16 @@
     "lng": 76.5278,
     "note": "waste piled along the wall",
     "createdAt": "2026-10-10T09:05:00+00:00",
+    "classification": null,
+    "status": "open"
+  },
+  {
+    "id": "1c6de1d172a0",
+    "photoUrl": "/uploads/1c6de1d172a0.png",
+    "lat": 31.71366199655649,
+    "lng": 76.5251088239701,
+    "note": "Foul smelling kept since 3 days",
+    "createdAt": "2026-10-11T07:08:33.619387+00:00",
     "classification": null,
     "status": "open"
   }
